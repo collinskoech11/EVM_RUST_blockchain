@@ -1,12 +1,17 @@
+
 use sha2::{Digest, Sha256};
 use std::time::{SystemTime, UNIX_EPOCH};
+use ethers::prelude::*; // Import ethers-rs components
+use ethers::providers::Http;
+use ethers::signers::Wallet;
+use hex;
 
 pub struct Transaction {
     from: Address,
     to: Option<Address>,
     value: U256,
     data: Vec<u8>,
-    gas_limit: Gas,
+    gas_limit: U256,
     gas_price: U256,
 }
 
@@ -19,6 +24,16 @@ pub struct Block {
     pub hash: String,
     transactions: Vec<Transaction>,
 }
+
+pub struct Wallet{
+    addr:Box<Wallet>
+}
+
+pub struct EVM {
+    provider: Http,
+    signer: Wallet,
+}
+
 
 impl Block {
     pub fn new(index: u64, previous_hash: String, data: String) -> Block {
@@ -62,6 +77,32 @@ impl Block {
     }
 }
 
+impl EVM {
+    pub async fn new(provider_url: &str, private_key: &str) -> Self {
+        let provider = Http::new(provider_url).expect("Failed to create HTTP provider");
+        let signer = Wallet::from_str(private_key, provider.clone())
+            .expect("Failed to create wallet from private key");
+        
+        Self { provider, signer }
+    }
+
+    pub async fn deploy_contract(&self, bytecode: &str) -> Result<Address, Box<dyn std::error::Error>> {
+        let factory = ContractFactory::new(
+            bytecode.as_bytes(),
+            self.signer.clone(),
+        );
+
+        let contract = factory.deploy(())
+            .send()
+            .await?;
+        
+        Ok(contract.address())
+    }
+
+    // Add more functions for interacting with the EVM as needed
+}
+
+
 pub struct Blockchain {
     pub blocks: Vec<Block>,
 }
@@ -100,6 +141,75 @@ impl Blockchain {
         }
 
         true
+    }
+
+    pub async fn execute_transactions(&mut self,evm: &EVM) {
+        // Create an Ethers provider
+        let http_provider = Http::new("http://localhost:8545").expect("Failed to create HTTP provider");
+        
+        // Create a wallet and signer (replace with your private key)
+        let wallet = LocalWallet::new([0u8; 32], http_provider.clone());
+        let wallet = Wallet::new(wallet, http_provider.clone());
+
+        // Iterate through the transactions in the latest block
+        for transaction in &self.blocks.last().unwrap().transactions {
+            // Validate and execute each transaction
+            // Implement gas calculation, nonce handling, state changes, etc.
+            // Handle contract deployments and method calls
+            // Deserialize the transaction fields
+            let from_address = wallet.address();
+            let to_address = transaction.to.clone();
+            let data = hex::decode(&transaction.data).expect("Failed to decode transaction data");
+
+            // Create a transaction
+            let tx = Transaction {
+                nonce: http_provider.get_transaction_count(from_address, None).await.expect("Failed to get nonce"),
+                gas_price: 1_000_000_000u64.into(), // Set a gas price
+                gas_limit: 100_000u64.into(), // Set a gas limit
+                to: to_address,
+                value: transaction.value.clone().into(), // Convert to ethers' U256
+                data: data.into(),
+                chain_id: 1u64, // Replace with the correct chain ID
+            };
+
+            // Sign and send the transaction
+            let signed_tx = wallet.sign_transaction(tx).await.expect("Failed to sign transaction");
+            let tx_hash = http_provider.send_transaction(signed_tx).await.expect("Failed to send transaction");
+
+            // Wait for the transaction to be mined (optional)
+            let _receipt = http_provider.wait_for_transaction(tx_hash, None).await.expect("Transaction failed to confirm");
+
+
+            
+            match transaction.to {
+                Some(to) => {
+                    // Execute a contract method call
+                    let result = evm.call_contract(&transaction.from, to, &transaction.data);
+                    match result {
+                        Ok(_) => {
+                            // Handle a successful contract method call
+                            // Update the blockchain state as needed
+                        }
+                        Err(_) => {
+                            // Handle a failed contract method call
+                        }
+                    }
+                }
+                None => {
+                    // This is a contract deployment
+                    let contract_address = evm.deploy_contract(&transaction.data);
+                    match contract_address {
+                        Ok(_) => {
+                            // Handle a successful contract deployment
+                            // Update the blockchain state as needed
+                        }
+                        Err(_) => {
+                            // Handle a failed contract deployment
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 

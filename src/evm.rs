@@ -1,6 +1,10 @@
 use ethers::prelude::*;
 use ethers::providers::Http;
-use std::convert::TryFrom;
+use ethers::signers::Wallet;
+
+pub struct Wallet{
+    addr:Box<Wallet>,
+}
 
 pub struct EVM {
     provider: Http,
@@ -8,7 +12,7 @@ pub struct EVM {
 }
 
 impl EVM {
-    pub fn new(provider_url: &str, private_key: &str) -> Self {
+    pub async fn new(provider_url: &str, private_key: &str) -> Self {
         let provider = Http::new(provider_url).expect("Failed to create HTTP provider");
         let signer = Wallet::from_str(private_key, provider.clone())
             .expect("Failed to create wallet from private key");
